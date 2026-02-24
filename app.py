@@ -570,7 +570,7 @@ st.session_state.setdefault("force_event_refresh", 0.0)
 with st.sidebar:
     st.header("Event Settings")
     season = st.number_input("Season", min_value=2019, max_value=2030, value=2025, step=1)
-    event_code = st.text_input("Event code", value="USTXSAQ")
+    event_code = st.text_input("Event code", value="USTXCMP4T")
     region = st.text_input("Region (RegionOption)", value="USTX")
 
     st.divider()
