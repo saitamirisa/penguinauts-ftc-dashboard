@@ -591,7 +591,7 @@ else:
     df["momentum_np_3"] = None
     df["momentum_score"] = pd.Series([pd.NA] * len(df), dtype="Int64")
 
-return event, df, active_filtering_used, len(active), len(roster), match_labels
+    return event, df, active_filtering_used, len(active), len(roster), match_labels
 
 
 # ----------------------------
