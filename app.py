@@ -188,7 +188,7 @@ def score_dataframe(df_base: pd.DataFrame, w_perf: Dict[str, float], w_fit: Dict
     df["_perf_pen"] = w_perf["pen"] * df["pen_norm"]
 
     perf = df["_perf_np"] + df["_perf_auto"] + df["_perf_tele"] + df["_perf_pen"]
-    conf = confidence_factor(df["season_matches"])
+    conf = confidence_factor(df["base_matches"])
     scout = perf * conf
 
     df["scout_score"] = (pd.to_numeric(scout, errors="coerce") * 100).round(0).astype("Int64")
@@ -428,9 +428,15 @@ def fetch_event_live_np_pen_and_active(season: int, event_code: str) -> Tuple[Di
                     continue
                 t = int(t)
                 active.add(t)
-                d = agg.setdefault(t, {"np_sum": 0.0, "np_count": 0, "pen_sum": 0.0, "pen_count": 0})
+                d = agg.setdefault(t, {"np_sum": 0.0, "np_count": 0, "pen_sum": 0.0, "pen_count": 0, "auto_sum": 0.0, "dc_sum": 0.0})
                 d["np_sum"] += float(np_val)
                 d["np_count"] += 1
+                auto_val = alliance_scores.get("autoPoints")
+                dc_val = alliance_scores.get("dcPoints")
+                if auto_val is not None:
+                    d["auto_sum"] += float(auto_val)
+                if dc_val is not None:
+                    d["dc_sum"] += float(dc_val)
                 if pen_val is not None:
                     d["pen_sum"] += float(pen_val)
                     d["pen_count"] += 1
@@ -444,6 +450,8 @@ def fetch_event_live_np_pen_and_active(season: int, event_code: str) -> Tuple[Di
             "event_matches": d["np_count"],
             "event_avg_np": (d["np_sum"] / d["np_count"]) if d["np_count"] else None,
             "event_avg_pen": (d["pen_sum"] / d["pen_count"]) if d["pen_count"] else None,
+            "event_avg_auto": (d["auto_sum"] / d["np_count"]) if d["np_count"] else None,
+            "event_avg_dc": (d["dc_sum"] / d["np_count"]) if d["np_count"] else None,
         }
 
     return event_avgs, active, any_played
@@ -518,8 +526,8 @@ def build_dataframe(
             "active_today": (int(t) in active),
             "total_value": tot_v,
             "total_rank": tot_r,
-            "auto_value": auto_v,
-            "teleop_value": tele_v,
+            "auto_value": (e.get("event_avg_auto") if (mode == "Game Day (Live)" and e.get("event_avg_auto") is not None) else auto_v),
+            "teleop_value": (e.get("event_avg_dc") if (mode == "Game Day (Live)" and e.get("event_avg_dc") is not None) else tele_v),
             "season_matches": s.get("season_matches", 0),
             "season_avg_np": s.get("season_avg_np"),
             "season_avg_pen": s.get("season_avg_pen"),
@@ -538,10 +546,20 @@ def build_dataframe(
     if df.empty:
         return event, df, active_filtering_used, len(active), len(roster), match_labels
 
-    df["np_norm"] = minmax(df["season_avg_np"], True)
-    df["auto_norm"] = minmax(df["auto_value"], True)
-    df["teleop_norm"] = minmax(df["teleop_value"], True)
-    df["pen_norm"] = minmax(df["season_avg_pen"], False)
+    # --- Choose scoring baseline ---
+if mode == "Game Day (Live)":
+    df["base_matches"] = pd.to_numeric(df["event_matches"], errors="coerce").fillna(0)
+    df["base_np"] = pd.to_numeric(df["event_avg_np"], errors="coerce")
+    df["base_pen"] = pd.to_numeric(df["event_avg_pen"], errors="coerce")
+else:
+    df["base_matches"] = pd.to_numeric(df["season_matches"], errors="coerce").fillna(0)
+    df["base_np"] = pd.to_numeric(df["season_avg_np"], errors="coerce")
+    df["base_pen"] = pd.to_numeric(df["season_avg_pen"], errors="coerce")
+
+df["np_norm"] = minmax(df["base_np"], True)
+df["auto_norm"] = minmax(df["auto_value"], True)
+df["teleop_norm"] = minmax(df["teleop_value"], True)
+df["pen_norm"] = minmax(df["base_pen"], False)
 
     for c in [
         "total_value", "auto_value", "teleop_value",
@@ -555,7 +573,25 @@ def build_dataframe(
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").round(0)
 
-    return event, df, active_filtering_used, len(active), len(roster), match_labels
+# --- Momentum: average NP over the last 3 played matches ---
+if match_labels:
+    last3_labels = match_labels[-3:]
+    def _mom(row):
+        vals = []
+        for lab in last3_labels:
+            v = row.get(f"NP::{lab}")
+            if pd.notna(v):
+                vals.append(float(v))
+        if not vals:
+            return None
+        return sum(vals) / len(vals)
+    df["momentum_np_3"] = df.apply(_mom, axis=1)
+    df["momentum_score"] = (minmax(df["momentum_np_3"], True) * 100).round(0).astype("Int64")
+else:
+    df["momentum_np_3"] = None
+    df["momentum_score"] = pd.Series([pd.NA] * len(df), dtype="Int64")
+
+return event, df, active_filtering_used, len(active), len(roster), match_labels
 
 
 # ----------------------------
@@ -637,6 +673,8 @@ def render_pick_list_tab(
         "auto_value",
         "teleop_value",
         "season_avg_np",
+        "momentum_score",
+        "momentum_np_3",
     ]
     if show_match_scores and match_labels:
         for lab in match_labels:
@@ -741,6 +779,9 @@ tabs = st.tabs(["Pre-Game (32240)", "Pick List A", "Pick List B", "Pick List C",
 with tabs[0]:
     st.header(f"Pre-Game Analysis — Penguinauts {PENGUINAUTS_TEAM} vs this event roster")
 
+    if mode == "Game Day (Live)":
+        st.info("**Game Day mode:** ScoutScore, AllianceFit, Auto, TeleOp, NP, and Penalties are calculated from matches already played at this event (FTCScout /events/.../matches).")
+
     w_perf_default = {"np": 0.40, "auto": 0.30, "tele": 0.25, "pen": 0.05}
     w_fit_default = {"auto": 0.50, "tele": 0.40, "pen": 0.10}
 
@@ -771,6 +812,8 @@ with tabs[0]:
         "auto_value",
         "teleop_value",
         "season_avg_np",
+        "momentum_score",
+        "momentum_np_3",
     ]
     if show_match_scores and match_labels:
         for lab in match_labels:
@@ -790,6 +833,9 @@ with tabs[0]:
             }), use_container_width=True)
 
 with tabs[1]:
+
+    if mode == "Game Day (Live)":
+        st.info("**Game Day mode:** rankings and scores are driven by this event's played matches.")
     render_pick_list_tab(
         df_base=df_base,
         tab_name="Pick List A (Balanced)",
@@ -802,6 +848,9 @@ with tabs[1]:
     )
 
 with tabs[2]:
+
+    if mode == "Game Day (Live)":
+        st.info("**Game Day mode:** rankings and scores are driven by this event's played matches.")
     render_pick_list_tab(
         df_base=df_base,
         tab_name="Pick List B (Low-pen emphasis)",
@@ -814,6 +863,9 @@ with tabs[2]:
     )
 
 with tabs[3]:
+
+    if mode == "Game Day (Live)":
+        st.info("**Game Day mode:** rankings and scores are driven by this event's played matches.")
     render_pick_list_tab(
         df_base=df_base,
         tab_name="Pick List C (Auto-first)",
