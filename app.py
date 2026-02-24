@@ -22,33 +22,34 @@ S = requests.Session()
 
 PENGUINAUTS_TEAM = 32240
 
-
 # ----------------------------
-# Simple disk cache helpers (optional)
+# Auth (Streamlit Google login)
 # ----------------------------
-def _cache_path(name: str) -> str:
-    return os.path.join(CACHE_DIR, name)
+def login_screen():
+    st.header("This app is private.")
+    st.subheader("Please log in.")
+    st.button("Log in with Google", on_click=st.login)
 
+# If auth isn't configured, st.user won't have attributes
+if not hasattr(st.user, "is_logged_in"):
+    st.error("Authentication is not configured for this deployment. Please add the [auth] section to Streamlit secrets.")
+    st.stop()
 
-def load_cache(name: str):
-    p = _cache_path(name)
-    if os.path.exists(p):
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
-    return None
+if not st.user.is_logged_in:
+    login_screen()
+    st.stop()
 
+ALLOWED_EMAILS = {
+    "saihero@gmail.com",
+    "preetibtv@gmail.com",
+}
+email = getattr(st.user, "email", None)
+if email not in ALLOWED_EMAILS:
+    st.error("You are not authorized to use this dashboard.")
+    st.button("Log out", on_click=st.logout)
+    st.stop()
 
-def save_cache(name: str, obj):
-    p = _cache_path(name)
-    try:
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
+st.sidebar.success(f"Signed in as {getattr(st.user, 'name', 'User')}")
 
 # ----------------------------
 # HTTP helpers
@@ -69,7 +70,6 @@ def get_json(url: str, params=None, retries: int = 4, timeout=(10, 60)):
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"GET {url} failed after retries")
 
-
 def gql(query: str, variables: dict, retries: int = 4, timeout=(10, 90)):
     for attempt in range(retries):
         try:
@@ -87,40 +87,6 @@ def gql(query: str, variables: dict, retries: int = 4, timeout=(10, 90)):
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError("GraphQL failed after retries")
 
-
-# ----------------------------
-# Login gate (Google via Streamlit auth)
-# ----------------------------
-def login_screen():
-    st.header("This app is private.")
-    st.subheader("Please log in.")
-    st.button("Log in with Google", on_click=st.login)
-
-
-# If auth isn't configured on a deployment, st.user has no attributes.
-if not hasattr(st.user, "is_logged_in"):
-    st.error("Authentication is not configured on this deployment. Add the [auth] section to Streamlit secrets.")
-    st.stop()
-
-if not st.user.is_logged_in:
-    login_screen()
-    st.stop()
-
-ALLOWED_EMAILS = {
-    "saihero@gmail.com",
-    "preetibtv@gmail.com",
-}
-
-email = getattr(st.user, "email", None)
-if email not in ALLOWED_EMAILS:
-    st.error("You are not authorized to use this dashboard.")
-    st.button("Log out", on_click=st.logout)
-    st.stop()
-
-st.caption(f"Signed in as: {st.user.name} ({email})")
-st.button("Log out", on_click=st.logout)
-
-
 # ----------------------------
 # Scoring helpers
 # ----------------------------
@@ -133,27 +99,21 @@ def minmax(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
     norm = (s - mn) / (mx - mn)
     return norm if higher_is_better else (1.0 - norm)
 
-
 def confidence_factor(n_matches: pd.Series) -> pd.Series:
     n = pd.to_numeric(n_matches, errors="coerce").fillna(0.0)
     # approaches 1.0 as matches increase; small boost for more data
     return 0.85 + 0.15 * (1.0 - (1.0 / (1.0 + n / 12.0)))
 
-
 def weights_ui(prefix: str, title: str, defaults: Dict[str, int], allow_pen_zero: bool = True) -> Dict[str, Any]:
-    """
-    Endgame has been removed. Weights now cover:
-      NP, Auto, TeleOp, Penalty
-    """
     st.subheader(title)
     cols = st.columns(4)
 
-    np_w = cols[0].slider("NP", 1, 100, int(defaults.get("np", 35)), step=1, key=f"{prefix}_np")
-    auto_w = cols[1].slider("Auto", 1, 100, int(defaults.get("auto", 30)), step=1, key=f"{prefix}_auto")
-    tele_w = cols[2].slider("TeleOp", 1, 100, int(defaults.get("tele", 30)), step=1, key=f"{prefix}_tele")
+    np_w = cols[0].slider("NP", 1, 100, int(defaults.get("np", 34)), step=1, key=f"{prefix}_np")
+    auto_w = cols[1].slider("Auto", 1, 100, int(defaults.get("auto", 22)), step=1, key=f"{prefix}_auto")
+    tele_w = cols[2].slider("TeleOp", 1, 100, int(defaults.get("tele", 22)), step=1, key=f"{prefix}_tele")
 
     pen_min = 0 if allow_pen_zero else 1
-    pen_w = cols[3].slider("Penalty", pen_min, 100, int(defaults.get("pen", 5)), step=1, key=f"{prefix}_pen")
+    pen_w = cols[3].slider("Penalty", pen_min, 100, int(defaults.get("pen", 2)), step=1, key=f"{prefix}_pen")
 
     total = np_w + auto_w + tele_w + pen_w
     if total <= 0:
@@ -166,55 +126,33 @@ def weights_ui(prefix: str, title: str, defaults: Dict[str, int], allow_pen_zero
         "pen": pen_w / total,
         "raw": {"np": np_w, "auto": auto_w, "tele": tele_w, "pen": pen_w},
     }
-    st.caption(
-        f"Normalized: NP {w['np']:.2f}, Auto {w['auto']:.2f}, TeleOp {w['tele']:.2f}, Pen {w['pen']:.2f}"
-    )
+    st.caption(f"Normalized: NP {w['np']:.2f}, Auto {w['auto']:.2f}, TeleOp {w['tele']:.2f}, Pen {w['pen']:.2f}")
     return w
-
 
 def score_dataframe(df_base: pd.DataFrame, w_perf: Dict[str, float], w_fit: Dict[str, float]) -> pd.DataFrame:
     """
     df_base must already have:
-      np_norm, auto_norm, teleop_norm, pen_norm, season_matches
-    Produces scout_score and alliance_fit_score as whole-number %,
-    plus component breakdown columns.
+      np_norm, auto_norm, teleop_norm, pen_norm, base_matches
+    Produces scout_score and alliance_fit_score as whole-number %.
     """
     df = df_base.copy()
 
-    # Components
-    df["_perf_np"] = w_perf["np"] * df["np_norm"]
-    df["_perf_auto"] = w_perf["auto"] * df["auto_norm"]
-    df["_perf_tele"] = w_perf["tele"] * df["teleop_norm"]
-    df["_perf_pen"] = w_perf["pen"] * df["pen_norm"]
-
-    perf = df["_perf_np"] + df["_perf_auto"] + df["_perf_tele"] + df["_perf_pen"]
-    conf = confidence_factor(df["base_matches"])
-    scout = perf * conf
-
+    perf = (
+        w_perf["np"] * df["np_norm"]
+        + w_perf["auto"] * df["auto_norm"]
+        + w_perf["tele"] * df["teleop_norm"]
+        + w_perf["pen"] * df["pen_norm"]
+    )
+    scout = perf * confidence_factor(df["base_matches"])
     df["scout_score"] = (pd.to_numeric(scout, errors="coerce") * 100).round(0).astype("Int64")
 
-    # Component contributions (percentage points)
-    df["scout_np_pts"] = (pd.to_numeric(df["_perf_np"] * conf, errors="coerce") * 100).round(1)
-    df["scout_auto_pts"] = (pd.to_numeric(df["_perf_auto"] * conf, errors="coerce") * 100).round(1)
-    df["scout_tele_pts"] = (pd.to_numeric(df["_perf_tele"] * conf, errors="coerce") * 100).round(1)
-    df["scout_pen_pts"] = (pd.to_numeric(df["_perf_pen"] * conf, errors="coerce") * 100).round(1)
-    df["scout_conf"] = pd.to_numeric(conf, errors="coerce").round(3)
-
-    # Alliance fit
-    df["_fit_auto"] = w_fit["auto"] * df["auto_norm"]
-    df["_fit_tele"] = w_fit["tele"] * df["teleop_norm"]
-    df["_fit_pen"] = w_fit["pen"] * df["pen_norm"]
-
-    fit = df["_fit_auto"] + df["_fit_tele"] + df["_fit_pen"]
+    fit = (
+        w_fit["auto"] * df["auto_norm"]
+        + w_fit["tele"] * df["teleop_norm"]
+        + w_fit["pen"] * df["pen_norm"]
+    )
     df["alliance_fit_score"] = (pd.to_numeric(fit, errors="coerce") * 100).round(0).astype("Int64")
-
-    df["fit_auto_pts"] = (pd.to_numeric(df["_fit_auto"], errors="coerce") * 100).round(1)
-    df["fit_tele_pts"] = (pd.to_numeric(df["_fit_tele"], errors="coerce") * 100).round(1)
-    df["fit_pen_pts"] = (pd.to_numeric(df["_fit_pen"], errors="coerce") * 100).round(1)
-
-    df.drop(columns=[c for c in df.columns if c.startswith("_perf_") or c.startswith("_fit_")], inplace=True, errors="ignore")
     return df
-
 
 # ----------------------------
 # FTCScout data fetch
@@ -248,9 +186,12 @@ query MatchRecords($season: Int!, $skip: Int!, $take: Int!, $region: RegionOptio
 }
 """
 
-
-@st.cache_data(ttl=60 * 60 * 12, show_spinner=True)
+@st.cache_data(ttl=60 * 60 * 12, show_spinner=True)  # 12 hours
 def get_season_avgs_cached(season: int, region: str) -> Dict[int, Dict[str, Any]]:
+    """
+    Expensive region-wide scan. Cached for 12 hours by Streamlit.
+    Returns: {teamNumber: {season_matches, season_avg_np, season_avg_pen}}
+    """
     agg: Dict[int, Dict[str, float]] = {}
     page_size = 300
     sleep_s = 0.02
@@ -290,9 +231,8 @@ def get_season_avgs_cached(season: int, region: str) -> Dict[int, Dict[str, Any]
                 t = p.get("teamNumber")
                 if t is None:
                     continue
-                t = int(t)
 
-                d = agg.setdefault(t, {"np_sum": 0.0, "np_count": 0.0, "pen_sum": 0.0, "pen_count": 0.0})
+                d = agg.setdefault(int(t), {"np_sum": 0.0, "np_count": 0.0, "pen_sum": 0.0, "pen_count": 0.0})
                 d["np_sum"] += float(np_val)
                 d["np_count"] += 1.0
                 if pen_val is not None:
@@ -310,101 +250,77 @@ def get_season_avgs_cached(season: int, region: str) -> Dict[int, Dict[str, Any]
 
     season_avgs: Dict[int, Dict[str, Any]] = {}
     for t, d in agg.items():
+        np_count = int(d["np_count"])
+        pen_count = int(d["pen_count"])
         season_avgs[int(t)] = {
-            "season_matches": int(d["np_count"]),
-            "season_avg_np": (d["np_sum"] / d["np_count"]) if d["np_count"] else None,
-            "season_avg_pen": (d["pen_sum"] / d["pen_count"]) if d["pen_count"] else None,
+            "season_matches": np_count,
+            "season_avg_np": (d["np_sum"] / np_count) if np_count else None,
+            "season_avg_pen": (d["pen_sum"] / pen_count) if pen_count else None,
         }
     return season_avgs
 
-
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=True)
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=True)  # 6 hours
 def fetch_event_roster(season: int, event_code: str) -> Tuple[Dict[str, Any], List[int]]:
     event = get_json(f"{REST_BASE}/events/{season}/{event_code}") or {}
     teps = get_json(f"{REST_BASE}/events/{season}/{event_code}/teams") or []
     roster = sorted({int(t["teamNumber"]) for t in teps if t.get("teamNumber") is not None})
     return event, roster
 
+@st.cache_data(ttl=60, show_spinner=True)  # 60 seconds
+def fetch_event_matches(season: int, event_code: str) -> List[Dict[str, Any]]:
+    return get_json(f"{REST_BASE}/events/{season}/{event_code}/matches") or []
 
-def _match_label(m: Dict[str, Any], fallback_idx: int) -> str:
-    for k in ("matchName", "name", "key"):
-        if m.get(k):
-            return str(m[k])
-    tl = m.get("tournamentLevel") or m.get("level") or ""
-    series = m.get("series") or ""
-    num = m.get("matchNumber") or m.get("matchNum") or m.get("number")
-    if num is not None:
-        return f"{tl}{series}-{num}".strip("-")
-    return f"Match-{fallback_idx+1}"
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def fetch_team_cached(team_number: int) -> Dict[str, Any]:
+    return get_json(f"{REST_BASE}/teams/{team_number}") or {}
 
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def safe_quickstats(team_number: int, season: int, region: str) -> Dict[str, Any]:
+    qs = get_json(f"{REST_BASE}/teams/{team_number}/quick-stats", params={"season": season, "region": region})
+    return qs or {}
 
-@st.cache_data(ttl=60, show_spinner=True)
-def fetch_event_match_np_by_team(season: int, event_code: str) -> Tuple[List[str], Dict[int, Dict[str, Optional[float]]], bool]:
-    matches = get_json(f"{REST_BASE}/events/{season}/{event_code}/matches") or []
-    played = []
-    for i, m in enumerate(matches):
-        if not m.get("scores"):
-            continue
-        played.append((i, m))
+def _match_label(m: Dict[str, Any]) -> str:
+    # We mostly care about qualifications ordering
+    level = (m.get("tournamentLevel") or "").strip()
+    mid = m.get("id")
+    if level.lower().startswith("qual"):
+        return f"Q{mid}"
+    if level.lower().startswith("semi"):
+        return f"SF{mid}"
+    if level.lower().startswith("final"):
+        return f"F{mid}"
+    return f"M{mid}"
 
-    if not played:
-        return [], {}, False
-
-    match_labels: List[str] = []
-    team_to_match_np: Dict[int, Dict[str, Optional[float]]] = {}
-
-    for idx, m in played:
-        label = _match_label(m, idx)
-        if label in match_labels:
-            suffix = 2
-            new_label = f"{label}-{suffix}"
-            while new_label in match_labels:
-                suffix += 1
-                new_label = f"{label}-{suffix}"
-            label = new_label
-        match_labels.append(label)
-
-        scores = m.get("scores") or {}
-        red = scores.get("red") or {}
-        blue = scores.get("blue") or {}
-        red_np = red.get("totalPointsNp")
-        blue_np = blue.get("totalPointsNp")
-
-        teams = m.get("teams") or []
-
-        def assign(alliance_name: str, np_val):
-            if np_val is None:
-                return
-            for p in teams:
-                if p.get("alliance") != alliance_name:
-                    continue
-                if not p.get("onField", True):
-                    continue
-                if p.get("noShow") or p.get("dq"):
-                    continue
-                t = p.get("teamNumber")
-                if t is None:
-                    continue
-                team_to_match_np.setdefault(int(t), {})[label] = float(np_val)
-
-        assign("Red", red_np)
-        assign("Blue", blue_np)
-
-    return match_labels, team_to_match_np, True
-
-
-@st.cache_data(ttl=60, show_spinner=True)
-def fetch_event_live_np_pen_and_active(season: int, event_code: str) -> Tuple[Dict[int, Dict[str, Any]], Set[int], bool]:
-    matches = get_json(f"{REST_BASE}/events/{season}/{event_code}/matches") or []
-    agg = {}
-    active = set()
+def compute_event_from_matches(matches: List[Dict[str, Any]]) -> Tuple[Dict[int, Dict[str, Any]], Set[int], bool, List[str], Dict[int, Dict[str, float]], Dict[int, List[float]]]:
+    """
+    From event matches (REST), compute:
+      - event averages per team: NP, Pen, Auto, DC (TeleOp) + match count
+      - active team set
+      - any_played flag
+      - match_labels ordered by match id
+      - per-team per-match NP mapping (team -> {label: totalPointsNp})
+      - per-team NP history list in match order (for momentum)
+    """
+    agg: Dict[int, Dict[str, float]] = {}
+    active: Set[int] = set()
     any_played = False
 
-    for m in matches:
+    # sort by id (qual order). Some events may have id as matchId
+    matches_sorted = sorted(matches, key=lambda x: (x.get("tournamentLevel") or "", x.get("series") or 0, x.get("id") or 0))
+    match_labels: List[str] = []
+    team_match_np: Dict[int, Dict[str, float]] = {}
+    team_np_history: Dict[int, List[float]] = {}
+
+    for m in matches_sorted:
         scores = m.get("scores")
         if not scores:
             continue
+        if not m.get("hasBeenPlayed", True):
+            continue
+
         any_played = True
+        label = _match_label(m)
+        match_labels.append(label)
 
         red = (scores.get("red") or {})
         blue = (scores.get("blue") or {})
@@ -413,6 +329,9 @@ def fetch_event_live_np_pen_and_active(season: int, event_code: str) -> Tuple[Di
         def add_for_alliance(alliance_name: str, alliance_scores: Dict[str, Any]):
             np_val = alliance_scores.get("totalPointsNp")
             pen_val = alliance_scores.get("penaltyPointsCommitted")
+            auto_val = alliance_scores.get("autoPoints")
+            dc_val = alliance_scores.get("dcPoints")
+
             if np_val is None:
                 return
 
@@ -428,45 +347,55 @@ def fetch_event_live_np_pen_and_active(season: int, event_code: str) -> Tuple[Di
                     continue
                 t = int(t)
                 active.add(t)
-                d = agg.setdefault(t, {"np_sum": 0.0, "np_count": 0, "pen_sum": 0.0, "pen_count": 0, "auto_sum": 0.0, "dc_sum": 0.0})
+
+                d = agg.setdefault(t, {"np_sum": 0.0, "np_count": 0.0, "pen_sum": 0.0, "pen_count": 0.0, "auto_sum": 0.0, "dc_sum": 0.0})
                 d["np_sum"] += float(np_val)
-                d["np_count"] += 1
-                auto_val = alliance_scores.get("autoPoints")
-                dc_val = alliance_scores.get("dcPoints")
+                d["np_count"] += 1.0
+                if pen_val is not None:
+                    d["pen_sum"] += float(pen_val)
+                    d["pen_count"] += 1.0
                 if auto_val is not None:
                     d["auto_sum"] += float(auto_val)
                 if dc_val is not None:
                     d["dc_sum"] += float(dc_val)
-                if pen_val is not None:
-                    d["pen_sum"] += float(pen_val)
-                    d["pen_count"] += 1
+
+                team_match_np.setdefault(t, {})[label] = float(np_val)
+                team_np_history.setdefault(t, []).append(float(np_val))
 
         add_for_alliance("Red", red)
         add_for_alliance("Blue", blue)
 
-    event_avgs = {}
+    event_avgs: Dict[int, Dict[str, Any]] = {}
     for t, d in agg.items():
-        event_avgs[int(t)] = {
-            "event_matches": d["np_count"],
-            "event_avg_np": (d["np_sum"] / d["np_count"]) if d["np_count"] else None,
-            "event_avg_pen": (d["pen_sum"] / d["pen_count"]) if d["pen_count"] else None,
-            "event_avg_auto": (d["auto_sum"] / d["np_count"]) if d["np_count"] else None,
-            "event_avg_dc": (d["dc_sum"] / d["np_count"]) if d["np_count"] else None,
+        np_count = int(d["np_count"])
+        pen_count = int(d["pen_count"])
+        event_avgs[t] = {
+            "event_matches": np_count,
+            "event_avg_np": (d["np_sum"] / np_count) if np_count else None,
+            "event_avg_pen": (d["pen_sum"] / pen_count) if pen_count else None,
+            "event_avg_auto": (d["auto_sum"] / np_count) if np_count else None,
+            "event_avg_dc": (d["dc_sum"] / np_count) if np_count else None,
         }
 
-    return event_avgs, active, any_played
+    # Keep labels unique and stable (some events might have duplicates if id overlaps across levels)
+    # If duplicates appear, we suffix them.
+    seen = {}
+    unique_labels = []
+    for lab in match_labels:
+        if lab not in seen:
+            seen[lab] = 1
+            unique_labels.append(lab)
+        else:
+            seen[lab] += 1
+            unique_labels.append(f"{lab}_{seen[lab]}")
+    # If we changed labels for uniqueness, remap team_match_np keys accordingly
+    if unique_labels != match_labels:
+        remap = dict(zip(match_labels, unique_labels))
+        match_labels = unique_labels
+        for t, mp in list(team_match_np.items()):
+            team_match_np[t] = {remap.get(k, k): v for k, v in mp.items()}
 
-
-@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
-def fetch_team_cached(team_number: int) -> Dict[str, Any]:
-    return get_json(f"{REST_BASE}/teams/{team_number}") or {}
-
-
-@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
-def safe_quickstats(team_number: int, season: int, region: str) -> Dict[str, Any]:
-    qs = get_json(f"{REST_BASE}/teams/{team_number}/quick-stats", params={"season": season, "region": region})
-    return qs or {}
-
+    return event_avgs, active, any_played, match_labels, team_match_np, team_np_history
 
 def build_dataframe(
     season: int,
@@ -474,12 +403,15 @@ def build_dataframe(
     region: str,
     mode: str,
     include_inactive_override: bool,
-) -> Tuple[Dict[str, Any], pd.DataFrame, bool, int, int, List[str]]:
+) -> Tuple[Dict[str, Any], pd.DataFrame, bool, int, int, List[str], Dict[int, Dict[str, float]], Dict[int, List[float]]]:
+    # roster
     event, roster = fetch_event_roster(season, event_code)
 
-    event_avgs, active, any_played = fetch_event_live_np_pen_and_active(season, event_code)
-    match_labels, team_to_match_np, _ = fetch_event_match_np_by_team(season, event_code)
+    # matches -> event averages + match labels + per-team match NP
+    matches = fetch_event_matches(season, event_code)
+    event_avgs, active, any_played, match_labels, team_match_np, team_np_history = compute_event_from_matches(matches)
 
+    # Mode logic for active filtering
     if mode == "Pre-Game Analysis":
         teams = roster
         active_filtering_used = False
@@ -500,11 +432,12 @@ def build_dataframe(
                     teams = active_list
                     active_filtering_used = True
 
+    # season averages (cached)
     season_avgs = get_season_avgs_cached(season, region)
 
     rows = []
     for t in teams:
-        qs = safe_quickstats(t, season, region)
+        qs = safe_quickstats(int(t), season, region)
 
         def stat(qs_obj, key):
             s = (qs_obj or {}).get(key) or {}
@@ -520,79 +453,75 @@ def build_dataframe(
         team_obj = fetch_team_cached(int(t))
         name = team_obj.get("name") or f"Team {t}"
 
-        row = {
+        # momentum: last 3 NP matches at this event
+        hist = team_np_history.get(int(t), [])
+        mom3 = (sum(hist[-3:]) / len(hist[-3:])) if len(hist) > 0 else None
+
+        base_auto = e.get("event_avg_auto") if mode == "Game Day (Live)" else auto_v
+        base_tele = e.get("event_avg_dc") if mode == "Game Day (Live)" else tele_v
+
+        rows.append({
             "team_number": int(t),
             "team_name": name,
             "active_today": (int(t) in active),
+
             "total_value": tot_v,
             "total_rank": tot_r,
-            "auto_value": (e.get("event_avg_auto") if (mode == "Game Day (Live)" and e.get("event_avg_auto") is not None) else auto_v),
-            "teleop_value": (e.get("event_avg_dc") if (mode == "Game Day (Live)" and e.get("event_avg_dc") is not None) else tele_v),
+
+            # On Game Day we override auto/tele to be event averages; pre-game uses quick-stats
+            "auto_value": base_auto,
+            "teleop_value": base_tele,
+
             "season_matches": s.get("season_matches", 0),
             "season_avg_np": s.get("season_avg_np"),
             "season_avg_pen": s.get("season_avg_pen"),
+
             "event_matches": e.get("event_matches", 0),
             "event_avg_np": e.get("event_avg_np"),
             "event_avg_pen": e.get("event_avg_pen"),
-        }
 
-        per_team = team_to_match_np.get(int(t), {})
-        for lab in match_labels:
-            row[f"NP::{lab}"] = per_team.get(lab)
-
-        rows.append(row)
+            "momentum_np_3": mom3,
+        })
 
     df = pd.DataFrame(rows)
     if df.empty:
-        return event, df, active_filtering_used, len(active), len(roster), match_labels
+        return event, df, active_filtering_used, len(active), len(roster), match_labels, team_match_np, team_np_history
 
-    # --- Choose scoring baseline ---
-if mode == "Game Day (Live)":
-    df["base_matches"] = pd.to_numeric(df["event_matches"], errors="coerce").fillna(0)
-    df["base_np"] = pd.to_numeric(df["event_avg_np"], errors="coerce")
-    df["base_pen"] = pd.to_numeric(df["event_avg_pen"], errors="coerce")
-else:
-    df["base_matches"] = pd.to_numeric(df["season_matches"], errors="coerce").fillna(0)
-    df["base_np"] = pd.to_numeric(df["season_avg_np"], errors="coerce")
-    df["base_pen"] = pd.to_numeric(df["season_avg_pen"], errors="coerce")
+    # Choose baseline for scoring (season vs event)
+    if mode == "Game Day (Live)":
+        df["base_matches"] = pd.to_numeric(df["event_matches"], errors="coerce").fillna(0)
+        df["base_np"] = pd.to_numeric(df["event_avg_np"], errors="coerce")
+        df["base_pen"] = pd.to_numeric(df["event_avg_pen"], errors="coerce")
+    else:
+        df["base_matches"] = pd.to_numeric(df["season_matches"], errors="coerce").fillna(0)
+        df["base_np"] = pd.to_numeric(df["season_avg_np"], errors="coerce")
+        df["base_pen"] = pd.to_numeric(df["season_avg_pen"], errors="coerce")
 
-df["np_norm"] = minmax(df["base_np"], True)
-df["auto_norm"] = minmax(df["auto_value"], True)
-df["teleop_norm"] = minmax(df["teleop_value"], True)
-df["pen_norm"] = minmax(df["base_pen"], False)
+    # normalize
+    df["np_norm"] = minmax(df["base_np"], True)
+    df["auto_norm"] = minmax(df["auto_value"], True)
+    df["teleop_norm"] = minmax(df["teleop_value"], True)
+    df["pen_norm"] = minmax(df["base_pen"], False)
 
-for c in [
-    "total_value", "auto_value", "teleop_value",
-    "season_avg_np", "season_avg_pen",
-    "event_avg_np", "event_avg_pen",
-]:
-    df[c] = pd.to_numeric(df[c], errors="coerce").round(1)
+    # momentum score (normalized 0-100)
+    df["momentum_norm"] = minmax(df["momentum_np_3"], True)
+    df["momentum_score"] = (pd.to_numeric(df["momentum_norm"], errors="coerce") * 100).round(0).astype("Int64")
 
-for lab in match_labels:
-    c = f"NP::{lab}"
-    if c in df.columns:
-        df[c] = pd.to_numeric(df[c], errors="coerce").round(0)
+    # attach per-match score columns (NP) for display (all modes; mainly shown on Game Day)
+    for lab in match_labels:
+        col = f"{lab}_NP"
+        df[col] = df["team_number"].map(lambda tn: (team_match_np.get(int(tn), {}) or {}).get(lab))
 
-# --- Momentum: average NP over the last 3 played matches ---
-if match_labels:
-    last3_labels = match_labels[-3:]
-    def _mom(row):
-        vals = []
-        for lab in last3_labels:
-            v = row.get(f"NP::{lab}")
-            if pd.notna(v):
-                vals.append(float(v))
-        if not vals:
-            return None
-        return sum(vals) / len(vals)
-    df["momentum_np_3"] = df.apply(_mom, axis=1)
-    df["momentum_score"] = (minmax(df["momentum_np_3"], True) * 100).round(0).astype("Int64")
-else:
-    df["momentum_np_3"] = None
-    df["momentum_score"] = pd.Series([pd.NA] * len(df), dtype="Int64")
+    # round numeric display (raw columns)
+    for c in [
+        "total_value", "auto_value", "teleop_value",
+        "season_avg_np", "season_avg_pen",
+        "event_avg_np", "event_avg_pen",
+        "momentum_np_3"
+    ]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").round(1)
 
-    return event, df, active_filtering_used, len(active), len(roster), match_labels
-
+    return event, df, active_filtering_used, len(active), len(roster), match_labels, team_match_np, team_np_history
 
 # ----------------------------
 # UI helpers
@@ -602,7 +531,6 @@ def apply_removed_teams(df: pd.DataFrame) -> pd.DataFrame:
     if not removed:
         return df
     return df[~df["team_number"].isin(list(removed))].copy()
-
 
 def pick_list_controls(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
     removed = st.session_state.setdefault("removed_teams", set())
@@ -615,9 +543,8 @@ def pick_list_controls(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         "Remove teams from pick list",
         options=options,
         format_func=lambda x: f"{x} — {df.loc[df['team_number']==x, 'team_name'].iloc[0] if (df['team_number']==x).any() else ''}",
-        key=f"{key_prefix}_remove_select",
+        key=f"{key_prefix}_remove_select"
     )
-
     if cols[1].button("Remove selected", key=f"{key_prefix}_remove_btn"):
         for t in to_remove:
             removed.add(int(t))
@@ -631,24 +558,49 @@ def pick_list_controls(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
     st.caption(f"Removed teams count: {len(st.session_state.get('removed_teams', set()))}")
     return apply_removed_teams(df)
 
-
-def _sort_keys_for_rank_mode(rank_mode: str) -> Tuple[List[str], List[bool]]:
-    if rank_mode.startswith("FTCScout"):
-        return ["total_rank"], [True]
-    return ["scout_score", "alliance_fit_score", "total_value", "total_rank"], [False, False, False, True]
-
+def render_score_breakdown(df_scored: pd.DataFrame, w_perf: Dict[str, Any], w_fit: Dict[str, Any], key_prefix: str):
+    with st.expander("ScoutScore breakdown (for one team)"):
+        team = st.selectbox("Select team", df_scored["team_number"].tolist(), key=f"{key_prefix}_breakdown_team")
+        r = df_scored[df_scored["team_number"] == team].iloc[0]
+        st.write(
+            {
+                "Team": f"{int(team)} — {r['team_name']}",
+                "Base matches (confidence)": int(r["base_matches"]),
+                "NP (base)": r["base_np"],
+                "Auto (value)": r["auto_value"],
+                "TeleOp (value)": r["teleop_value"],
+                "Penalty (base)": r["base_pen"],
+                "Normalized components": {
+                    "np_norm": float(r["np_norm"]) if pd.notna(r["np_norm"]) else None,
+                    "auto_norm": float(r["auto_norm"]) if pd.notna(r["auto_norm"]) else None,
+                    "teleop_norm": float(r["teleop_norm"]) if pd.notna(r["teleop_norm"]) else None,
+                    "pen_norm": float(r["pen_norm"]) if pd.notna(r["pen_norm"]) else None,
+                },
+                "Weights": {
+                    "ScoutScore": w_perf.get("raw", {}),
+                    "AllianceFit": w_fit.get("raw", {}),
+                },
+                "Outputs": {
+                    "ScoutScore": int(r["scout_score"]) if pd.notna(r["scout_score"]) else None,
+                    "AllianceFit": int(r["alliance_fit_score"]) if pd.notna(r["alliance_fit_score"]) else None,
+                }
+            }
+        )
 
 def render_pick_list_tab(
     df_base: pd.DataFrame,
     tab_name: str,
     perf_defaults: Dict[str, int],
     fit_defaults: Dict[str, int],
+    sort_mode: str,
     key_prefix: str,
-    rank_mode: str,
+    mode: str,
     match_labels: List[str],
-    show_match_scores: bool,
 ):
     st.header(tab_name)
+
+    if mode == "Game Day (Live)":
+        st.info("Game Day ranking: ScoutScore & AllianceFit are computed from THIS EVENT's played matches (Auto/DC/NP/Pen).")
 
     w_perf = weights_ui(f"{key_prefix}_perf", "ScoutScore weights", perf_defaults, allow_pen_zero=True)
     st.divider()
@@ -656,59 +608,36 @@ def render_pick_list_tab(
 
     df_scored = score_dataframe(df_base, w_perf, w_fit)
 
-    sort_by, sort_asc = _sort_keys_for_rank_mode(rank_mode)
-    df_scored = df_scored.sort_values(by=sort_by, ascending=sort_asc, na_position="last").reset_index(drop=True)
+    # Sort (pick lists can be model-based or FTCScout-based)
+    if sort_mode == "FTCScout (total_rank)":
+        df_scored = df_scored.sort_values(by=["total_rank", "total_value"], ascending=[True, False], na_position="last")
+    else:
+        df_scored = df_scored.sort_values(by=["scout_score", "alliance_fit_score", "total_value", "total_rank"], ascending=[False, False, False, True], na_position="last")
 
-    df_scored = pick_list_controls(df_scored, key_prefix=key_prefix)
     df_scored = df_scored.reset_index(drop=True)
+    df_scored = pick_list_controls(df_scored, key_prefix=key_prefix).reset_index(drop=True)
     df_scored.insert(0, "No.", range(1, len(df_scored) + 1))
 
-    show_cols = [
-        "No.",
-        "team_number",
-        "team_name",
-        "scout_score",
-        "alliance_fit_score",
-        "total_value",
-        "auto_value",
-        "teleop_value",
-        "season_avg_np",
-        "momentum_score",
-        "momentum_np_3",
-    ]
-    if show_match_scores and match_labels:
-        for lab in match_labels:
-            c = f"NP::{lab}"
-            if c in df_scored.columns:
-                show_cols.append(c)
+    # Columns requested for Game Day and pick lists
+    base_cols = ["No.", "team_number", "team_name", "scout_score", "alliance_fit_score", "total_value", "auto_value", "teleop_value", "season_avg_np"]
+    if mode == "Game Day (Live)":
+        match_cols = [f"{lab}_NP" for lab in match_labels]
+        show_cols = base_cols + match_cols
+    else:
+        show_cols = base_cols + ["total_rank", "season_matches", "active_today"]
 
     st.dataframe(df_scored[show_cols], use_container_width=True, height=650)
-
-    with st.expander("ScoutScore & AllianceFit breakdown (selected team)"):
-        team_list = df_scored["team_number"].tolist()
-        if team_list:
-            t = st.selectbox("Team", team_list, key=f"{key_prefix}_breakdown_team")
-            r = df_scored[df_scored["team_number"] == t].iloc[0]
-            st.write(f"**{t} — {r['team_name']}**")
-            st.write(f"ScoutScore: **{r['scout_score']}%** (confidence: {r['scout_conf']})")
-            st.dataframe(pd.DataFrame({
-                "Component": ["NP", "Auto", "TeleOp", "Penalty"],
-                "Points": [r["scout_np_pts"], r["scout_auto_pts"], r["scout_tele_pts"], r["scout_pen_pts"]],
-            }), use_container_width=True)
-
-            st.write(f"AllianceFit: **{r['alliance_fit_score']}%**")
-            st.dataframe(pd.DataFrame({
-                "Component": ["Auto", "TeleOp", "Penalty"],
-                "Points": [r["fit_auto_pts"], r["fit_tele_pts"], r["fit_pen_pts"]],
-            }), use_container_width=True)
-
+    render_score_breakdown(df_scored, w_perf, w_fit, key_prefix=key_prefix)
 
 # ----------------------------
 # Streamlit App
 # ----------------------------
 st.set_page_config(page_title="FTC Scouting Dashboard", layout="wide")
-st.title("FTC Scouting Dashboard")
 
+st.title("FTC Scouting Dashboard")
+st.caption("Data source: FTCScout API (not direct scraping of ftc-events.firstinspires.org).")
+
+# Ensure session state keys exist
 st.session_state.setdefault("removed_teams", set())
 st.session_state.setdefault("force_event_refresh", 0.0)
 
@@ -725,18 +654,7 @@ with st.sidebar:
     if mode == "Game Day (Live)":
         include_inactive_override = st.checkbox("Include teams not active today", value=False)
 
-    st.divider()
-    st.subheader("Ranking")
-    rank_mode = st.selectbox(
-        "Rank lists by",
-        ["FTCScout (event rank)", "Model (ScoutScore)"],
-        index=0,
-        help="FTCScout uses the event's official rank (total_rank). Model uses ScoutScore.",
-    )
-
-    show_match_scores = False
-    if mode == "Game Day (Live)":
-        show_match_scores = st.checkbox("Show match-by-match NP scores in tables", value=True)
+    sort_mode = st.selectbox("Pick list sort", ["Model (ScoutScore)", "FTCScout (total_rank)"], index=0)
 
     refresh = st.button("Refresh Now")
 
@@ -750,8 +668,8 @@ if refresh:
     st.session_state["force_event_refresh"] = time.time()
     st.rerun()
 
-event, df_base, active_filtering_used, active_count, roster_count, match_labels = build_dataframe(
-    season=season,
+event, df_base, active_filtering_used, active_count, roster_count, match_labels, team_match_np, team_np_history = build_dataframe(
+    season=int(season),
     event_code=event_code.strip(),
     region=region.strip(),
     mode=mode,
@@ -759,10 +677,7 @@ event, df_base, active_filtering_used, active_count, roster_count, match_labels 
 )
 
 if df_base.empty:
-    st.warning(
-        "No teams returned. Double-check the event code. "
-        "If this is Game Day and matches haven't started yet, switch to Pre-Game Analysis."
-    )
+    st.warning("No teams returned. Double-check the event code.")
     st.stop()
 
 st.caption(
@@ -774,193 +689,170 @@ st.caption(
 if mode == "Game Day (Live)" and (not include_inactive_override) and (not active_filtering_used):
     st.info("No played matches found yet — showing full roster until matches begin.")
 
-tabs = st.tabs(["Pre-Game (32240)", "Pick List A", "Pick List B", "Pick List C", "Compare Teams", "Team Detail"])
+tabs = st.tabs(["Pre-Game (32240)", "Pick List A", "Pick List B", "Pick List C", "Momentum", "Compare Teams", "Team Detail"])
 
+# ----------------------------
+# Tab 0: Pre-Game (always rank by total_rank)
+# ----------------------------
 with tabs[0]:
     st.header(f"Pre-Game Analysis — Penguinauts {PENGUINAUTS_TEAM} vs this event roster")
 
     if mode == "Game Day (Live)":
-        st.info("**Game Day mode:** ScoutScore, AllianceFit, Auto, TeleOp, NP, and Penalties are calculated from matches already played at this event (FTCScout /events/.../matches).")
+        st.info("Game Day view: ScoutScore & AllianceFit are computed from THIS EVENT's played matches (Auto/DC/NP/Pen).")
 
-    w_perf_default = {"np": 0.40, "auto": 0.30, "tele": 0.25, "pen": 0.05}
-    w_fit_default = {"auto": 0.50, "tele": 0.40, "pen": 0.10}
+    w_perf_default = {"np": 32, "auto": 22, "tele": 22, "pen": 2}
+    w_fit_default = {"auto": 43, "tele": 25, "pen": 5}
 
-    df_scored = score_dataframe(df_base, w_perf_default, w_fit_default)
+    df_scored = score_dataframe(
+        df_base,
+        {"np": w_perf_default["np"]/100, "auto": w_perf_default["auto"]/100, "tele": w_perf_default["tele"]/100, "pen": w_perf_default["pen"]/100},
+        {"auto": w_fit_default["auto"]/100, "tele": w_fit_default["tele"]/100, "pen": w_fit_default["pen"]/100},
+    )
 
-    sort_by, sort_asc = _sort_keys_for_rank_mode(rank_mode)
-    df_scored = df_scored.sort_values(by=sort_by, ascending=sort_asc, na_position="last").reset_index(drop=True)
+    # Always rank Pre-Game by FTCScout total_rank
+    df_scored = df_scored.sort_values(by=["total_rank", "total_value"], ascending=[True, False], na_position="last").reset_index(drop=True)
     df_scored.insert(0, "No.", range(1, len(df_scored) + 1))
 
     if PENGUINAUTS_TEAM in df_scored["team_number"].values:
         idx = int(df_scored.index[df_scored["team_number"] == PENGUINAUTS_TEAM][0])
         row = df_scored.iloc[idx]
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("32240 Rank (current view)", f"{idx+1}/{len(df_scored)}")
+        c1.metric("32240 Rank (FTCScout)", f"{idx+1}/{len(df_scored)}")
         c2.metric("32240 ScoutScore", f"{row['scout_score']}%")
         c3.metric("32240 AllianceFit", f"{row['alliance_fit_score']}%")
-        c4.metric("FTCScout Total Rank", f"{row['total_rank']}")
+        c4.metric("Total Value / Rank", f"{row['total_value']} / {row['total_rank']}")
+    else:
+        st.warning(f"Team {PENGUINAUTS_TEAM} not found in this roster.")
 
-    st.subheader("All teams")
+    st.subheader("All teams (full roster)")
 
-    show_cols = [
-        "No.",
-        "team_number",
-        "team_name",
-        "scout_score",
-        "alliance_fit_score",
-        "total_value",
-        "auto_value",
-        "teleop_value",
-        "season_avg_np",
-        "momentum_score",
-        "momentum_np_3",
-    ]
-    if show_match_scores and match_labels:
-        for lab in match_labels:
-            c = f"NP::{lab}"
-            if c in df_scored.columns:
-                show_cols.append(c)
+    base_cols = ["No.", "team_number", "team_name", "scout_score", "alliance_fit_score", "total_value", "auto_value", "teleop_value", "season_avg_np"]
+    if mode == "Game Day (Live)":
+        match_cols = [f"{lab}_NP" for lab in match_labels]
+        show_cols = base_cols + match_cols
+    else:
+        show_cols = base_cols + ["total_rank", "season_matches", "active_today"]
 
     st.dataframe(df_scored[show_cols], use_container_width=True, height=650)
 
-    with st.expander("ScoutScore breakdown (Penguinauts)"):
-        if PENGUINAUTS_TEAM in df_scored["team_number"].values:
-            r = df_scored[df_scored["team_number"] == PENGUINAUTS_TEAM].iloc[0]
-            st.write(f"ScoutScore: **{r['scout_score']}%** (confidence: {r['scout_conf']})")
-            st.dataframe(pd.DataFrame({
-                "Component": ["NP", "Auto", "TeleOp", "Penalty"],
-                "Points": [r["scout_np_pts"], r["scout_auto_pts"], r["scout_tele_pts"], r["scout_pen_pts"]],
-            }), use_container_width=True)
-
+# ----------------------------
+# Pick List A/B/C
+# ----------------------------
 with tabs[1]:
-
-    if mode == "Game Day (Live)":
-        st.info("**Game Day mode:** rankings and scores are driven by this event's played matches.")
     render_pick_list_tab(
         df_base=df_base,
         tab_name="Pick List A (Balanced)",
-        perf_defaults={"np": 40, "auto": 30, "tele": 25, "pen": 5},
-        fit_defaults={"auto": 50, "tele": 40, "pen": 10, "np": 0},
+        perf_defaults={"np": 32, "auto": 22, "tele": 22, "pen": 2},
+        fit_defaults={"auto": 43, "tele": 25, "pen": 5, "np": 0},
+        sort_mode=sort_mode,
         key_prefix="pickA",
-        rank_mode=rank_mode,
+        mode=mode,
         match_labels=match_labels,
-        show_match_scores=show_match_scores,
     )
 
 with tabs[2]:
-
-    if mode == "Game Day (Live)":
-        st.info("**Game Day mode:** rankings and scores are driven by this event's played matches.")
     render_pick_list_tab(
         df_base=df_base,
         tab_name="Pick List B (Low-pen emphasis)",
-        perf_defaults={"np": 42, "auto": 28, "tele": 25, "pen": 5},
-        fit_defaults={"auto": 45, "tele": 45, "pen": 10, "np": 0},
+        perf_defaults={"np": 34, "auto": 20, "tele": 22, "pen": 4},
+        fit_defaults={"auto": 38, "tele": 30, "pen": 7, "np": 0},
+        sort_mode=sort_mode,
         key_prefix="pickB",
-        rank_mode=rank_mode,
+        mode=mode,
         match_labels=match_labels,
-        show_match_scores=show_match_scores,
     )
 
 with tabs[3]:
-
-    if mode == "Game Day (Live)":
-        st.info("**Game Day mode:** rankings and scores are driven by this event's played matches.")
     render_pick_list_tab(
         df_base=df_base,
         tab_name="Pick List C (Auto-first)",
-        perf_defaults={"np": 35, "auto": 35, "tele": 25, "pen": 5},
-        fit_defaults={"auto": 60, "tele": 30, "pen": 10, "np": 0},
+        perf_defaults={"np": 28, "auto": 30, "tele": 20, "pen": 2},
+        fit_defaults={"auto": 50, "tele": 20, "pen": 10, "np": 0},
+        sort_mode=sort_mode,
         key_prefix="pickC",
-        rank_mode=rank_mode,
+        mode=mode,
         match_labels=match_labels,
-        show_match_scores=show_match_scores,
     )
 
+# ----------------------------
+# Momentum tab (last 3 matches NP)
+# ----------------------------
 with tabs[4]:
-    st.header("Compare Teams")
-    team_list = df_base["team_number"].tolist()
-    if not team_list:
-        st.info("No teams.")
+    st.header("Momentum (last 3 played matches)")
+    if mode != "Game Day (Live)":
+        st.info("Switch to Game Day to see event momentum.")
     else:
-        a, b = st.columns(2)
-        t1 = a.selectbox("Team 1", team_list, index=0)
-        t2 = b.selectbox("Team 2", team_list, index=1 if len(team_list) > 1 else 0)
+        # Show top momentum teams
+        mom = df_base[["team_number", "team_name", "momentum_np_3", "momentum_score", "event_matches"]].copy()
+        mom = mom.sort_values(by=["momentum_score", "event_matches"], ascending=[False, False], na_position="last")
+        st.dataframe(mom, use_container_width=True, height=650)
 
-        def team_row(t):
-            return df_base[df_base["team_number"] == t].iloc[0]
-
-        r1 = team_row(t1)
-        r2 = team_row(t2)
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader(f"{t1} — {r1['team_name']}")
-            st.json({
-                "Total Value": r1["total_value"],
-                "Total Rank": r1["total_rank"],
-                "Auto": r1["auto_value"],
-                "TeleOp": r1["teleop_value"],
-                "Season Avg NP": r1["season_avg_np"],
-                "Season Matches": r1["season_matches"],
-                "Active Today": bool(r1["active_today"]),
-            })
-        with c2:
-            st.subheader(f"{t2} — {r2['team_name']}")
-            st.json({
-                "Total Value": r2["total_value"],
-                "Total Rank": r2["total_rank"],
-                "Auto": r2["auto_value"],
-                "TeleOp": r2["teleop_value"],
-                "Season Avg NP": r2["season_avg_np"],
-                "Season Matches": r2["season_matches"],
-                "Active Today": bool(r2["active_today"]),
-            })
-
+# ----------------------------
+# Compare Teams
+# ----------------------------
 with tabs[5]:
-    st.header("Team Detail")
+    st.header("Compare Teams")
+    a, b = st.columns(2)
+
     team_list = df_base["team_number"].tolist()
-    if not team_list:
-        st.info("No teams.")
-    else:
-        t = st.selectbox("Select team", team_list, index=0)
-        row = df_base[df_base["team_number"] == t].iloc[0]
+    t1 = a.selectbox("Team 1", team_list, index=0)
+    t2 = b.selectbox("Team 2", team_list, index=1 if len(team_list) > 1 else 0)
 
-        st.subheader(f"{t} — {row['team_name']}")
+    r1 = df_base[df_base["team_number"] == t1].iloc[0]
+    r2 = df_base[df_base["team_number"] == t2].iloc[0]
 
-        st.write(
-            f"- Total: {row['total_value']} (FTCScout Rank {row['total_rank']})\n"
-            f"- Auto: {row['auto_value']} | TeleOp: {row['teleop_value']}\n"
-            f"- Season Avg NP: {row['season_avg_np']} | Matches: {row['season_matches']}\n"
-            f"- Active today: {bool(row['active_today'])}"
-        )
-
-        if match_labels:
-            st.subheader("Match-by-match NP (this event)")
-            md = []
-            for lab in match_labels:
-                c = f"NP::{lab}"
-                md.append({"Match": lab, "NP": row.get(c)})
-            st.dataframe(pd.DataFrame(md), use_container_width=True, height=300)
-
-        field_avg = {
-            "Auto": float(pd.to_numeric(df_base["auto_value"], errors="coerce").mean(skipna=True)),
-            "TeleOp": float(pd.to_numeric(df_base["teleop_value"], errors="coerce").mean(skipna=True)),
-            "NP": float(pd.to_numeric(df_base["season_avg_np"], errors="coerce").mean(skipna=True)),
-            "Pen": float(pd.to_numeric(df_base["season_avg_pen"], errors="coerce").mean(skipna=True)),
-        }
-
-        team_vals = {
-            "Auto": row["auto_value"],
-            "TeleOp": row["teleop_value"],
-            "NP": row["season_avg_np"],
-            "Pen": row["season_avg_pen"],
-        }
-
-        chart_df = pd.DataFrame({
-            "Metric": list(team_vals.keys()) + list(field_avg.keys()),
-            "Value": [team_vals[k] for k in team_vals.keys()] + [field_avg[k] for k in field_avg.keys()],
-            "Series": ["Team"] * len(team_vals) + ["Field Avg"] * len(field_avg),
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader(f"{t1} — {r1['team_name']}")
+        st.json({
+            "Total Value": r1["total_value"],
+            "Total Rank": r1["total_rank"],
+            "Auto": r1["auto_value"],
+            "TeleOp": r1["teleop_value"],
+            "Season Avg NP": r1["season_avg_np"],
+            "Event Avg NP": r1["event_avg_np"],
+            "Event Matches": r1["event_matches"],
+            "Momentum NP (last 3)": r1["momentum_np_3"],
+            "Active Today": bool(r1["active_today"]),
+        })
+    with c2:
+        st.subheader(f"{t2} — {r2['team_name']}")
+        st.json({
+            "Total Value": r2["total_value"],
+            "Total Rank": r2["total_rank"],
+            "Auto": r2["auto_value"],
+            "TeleOp": r2["teleop_value"],
+            "Season Avg NP": r2["season_avg_np"],
+            "Event Avg NP": r2["event_avg_np"],
+            "Event Matches": r2["event_matches"],
+            "Momentum NP (last 3)": r2["momentum_np_3"],
+            "Active Today": bool(r2["active_today"]),
         })
 
-        st.bar_chart(chart_df, x="Metric", y="Value", color="Series")
+# ----------------------------
+# Team Detail
+# ----------------------------
+with tabs[6]:
+    st.header("Team Detail")
+    t = st.selectbox("Select team", df_base["team_number"].tolist(), index=0)
+    row = df_base[df_base["team_number"] == t].iloc[0]
+
+    st.subheader(f"{t} — {row['team_name']}")
+    st.write("**Quick overview**")
+    st.write(
+        f"- Total: {row['total_value']} (Rank {row['total_rank']})\n"
+        f"- Auto: {row['auto_value']} | TeleOp: {row['teleop_value']}\n"
+        f"- Season Avg NP: {row['season_avg_np']} | Season Matches: {row['season_matches']}\n"
+        f"- Event Avg NP: {row['event_avg_np']} | Event Matches: {row['event_matches']}\n"
+        f"- Momentum (last 3 NP): {row['momentum_np_3']} (Score {row['momentum_score']})\n"
+        f"- Active today: {bool(row['active_today'])}"
+    )
+
+    if mode == "Game Day (Live)" and match_labels:
+        st.subheader("Match-by-match NP")
+        mp = team_match_np.get(int(t), {}) or {}
+        # show as table in match order
+        data = [{"Match": lab, "NP": mp.get(lab)} for lab in match_labels if lab in mp]
+        st.dataframe(pd.DataFrame(data), use_container_width=True)
+
+    st.button("Log out", on_click=st.logout)
