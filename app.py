@@ -856,3 +856,10 @@ with tabs[6]:
         st.dataframe(pd.DataFrame(data), use_container_width=True)
 
     st.button("Log out", on_click=st.logout)
+    
+st.markdown("---")
+st.markdown("""
+© 2026 Swara Tamirisa (32240). All rights reserved.  
+Unauthorized use, duplication, or distribution of this scouting system,
+data model, or scoring methodology is strictly prohibited.
+""")
