@@ -87,6 +87,38 @@ def gql(query: str, variables: dict, retries: int = 4, timeout=(10, 90)):
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError("GraphQL failed after retries")
 
+import streamlit as st
+
+def login_screen():
+    st.header("This app is private.")
+    st.subheader("Please log in.")
+    st.button("Log in with Google", on_click=st.login)
+
+if not st.user.is_logged_in:
+    login_screen()
+    st.stop()
+
+# ---- USER IS LOGGED IN HERE ----
+
+ALLOWED_EMAILS = {
+    "your_email@gmail.com",
+    "mentor@gmail.com",
+    "captain@gmail.com",
+}
+
+email = getattr(st.user, "email", None)
+
+if email not in ALLOWED_EMAILS:
+    st.error("You are not authorized to use this dashboard.")
+    st.button("Log out", on_click=st.logout)
+    st.stop()
+
+# ---- AUTHORIZED USER ----
+st.header(f"Welcome, {st.user.name}!")
+st.button("Log out", on_click=st.logout)
+
+# Your dashboard code continues below this line
+
 
 # ----------------------------
 # Scoring helpers
