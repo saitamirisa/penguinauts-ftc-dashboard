@@ -158,8 +158,8 @@ def score_dataframe(df_base: pd.DataFrame, w_perf: Dict[str, float], w_fit: Dict
 # FTCScout data fetch
 # ----------------------------
 TEAM_MATCHRECORDS_2025 = """
-query MatchRecords($season: Int!, $skip: Int!, $take: Int!, $region: RegionOption) {
-  matchRecords(season: $season, skip: $skip, take: $take, region: $region) {
+query MatchRecords($season: Int!, $skip: Int!, $take: Int!) {
+  matchRecords(season: $season, skip: $skip, take: $take) {
     count
     data {
       data {
@@ -187,16 +187,16 @@ query MatchRecords($season: Int!, $skip: Int!, $take: Int!, $region: RegionOptio
 """
 
 @st.cache_data(ttl=60 * 60 * 12, show_spinner=True)  # 12 hours
-def get_season_avgs_cached(season: int, region: str) -> Dict[int, Dict[str, Any]]:
+def get_season_avgs_cached(season: int) -> Dict[int, Dict[str, Any]]:
     """
-    Expensive region-wide scan. Cached for 12 hours by Streamlit.
+    Expensive season-wide scan (no region filter). Cached for 12 hours by Streamlit.
     Returns: {teamNumber: {season_matches, season_avg_np, season_avg_pen}}
     """
     agg: Dict[int, Dict[str, float]] = {}
     page_size = 300
     sleep_s = 0.02
 
-    first = gql(TEAM_MATCHRECORDS_2025, {"season": season, "skip": 0, "take": page_size, "region": region})
+    first = gql(TEAM_MATCHRECORDS_2025, {"season": season, "skip": 0, "take": page_size})
     mr = first["matchRecords"]
     total = mr["count"]
 
@@ -242,7 +242,7 @@ def get_season_avgs_cached(season: int, region: str) -> Dict[int, Dict[str, Any]
     process_rows(mr["data"])
     skip = page_size
     while skip < total:
-        page = gql(TEAM_MATCHRECORDS_2025, {"season": season, "skip": skip, "take": page_size, "region": region})
+        page = gql(TEAM_MATCHRECORDS_2025, {"season": season, "skip": skip, "take": page_size})
         mr2 = page["matchRecords"]
         process_rows(mr2["data"])
         skip += page_size
@@ -433,7 +433,7 @@ def build_dataframe(
                     active_filtering_used = True
 
     # season averages (cached)
-    season_avgs = get_season_avgs_cached(season, region)
+    season_avgs = get_season_avgs_cached(season)
 
     rows = []
     for t in teams:
