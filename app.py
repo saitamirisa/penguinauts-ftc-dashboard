@@ -101,9 +101,9 @@ if not st.user.is_logged_in:
 # ---- USER IS LOGGED IN HERE ----
 
 ALLOWED_EMAILS = {
-    "your_email@gmail.com",
-    "mentor@gmail.com",
-    "captain@gmail.com",
+    "saihero@gmail.com",
+    "preetibtv@gmail.com",
+    #"captain@gmail.com",
 }
 
 email = getattr(st.user, "email", None)
