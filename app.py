@@ -561,17 +561,17 @@ df["auto_norm"] = minmax(df["auto_value"], True)
 df["teleop_norm"] = minmax(df["teleop_value"], True)
 df["pen_norm"] = minmax(df["base_pen"], False)
 
-    for c in [
-        "total_value", "auto_value", "teleop_value",
-        "season_avg_np", "season_avg_pen",
-        "event_avg_np", "event_avg_pen",
-    ]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").round(1)
+for c in [
+    "total_value", "auto_value", "teleop_value",
+    "season_avg_np", "season_avg_pen",
+    "event_avg_np", "event_avg_pen",
+]:
+    df[c] = pd.to_numeric(df[c], errors="coerce").round(1)
 
-    for lab in match_labels:
-        c = f"NP::{lab}"
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").round(0)
+for lab in match_labels:
+    c = f"NP::{lab}"
+    if c in df.columns:
+        df[c] = pd.to_numeric(df[c], errors="coerce").round(0)
 
 # --- Momentum: average NP over the last 3 played matches ---
 if match_labels:
